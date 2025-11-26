@@ -1,0 +1,25 @@
+{
+  "name": "mstrvn.dev",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node bot.js",
+    "bot": "node bot.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.7.2",
+    "axios-cookiejar-support": "^5.0.5",
+    "dotenv": "^16.4.7",
+    "jsdom": "^24.1.1",
+    "mongodb": "^6.8.0",
+    "node-cron": "^4.2.1",
+    "telegraf": "^4.16.3",
+    "tough-cookie": "^4.1.4",
+    "xlsx": "^0.18.5"
+  }
+}

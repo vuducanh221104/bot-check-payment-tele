@@ -1,0 +1,44 @@
+{
+  "name": "eslint-plugin-path-alias",
+  "version": "2.1.0",
+  "main": "./lib/index.js",
+  "repository": "https://github.com/msfragala/eslint-plugin-path-alias.git",
+  "author": "Mitchell Fragala <ms.fragala@gmail.com>",
+  "license": "MIT",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "index.js",
+    "package.json"
+  ],
+  "peerDependencies": {
+    "eslint": "^8.0.0"
+  },
+  "dependencies": {
+    "find-pkg": "^2.0.0",
+    "get-tsconfig": "^4.7.5",
+    "nanomatch": "^1.2.13"
+  },
+  "devDependencies": {
+    "@types/eslint": "^8.56.10",
+    "@types/estree": "^1.0.5",
+    "@types/node": "^20.12.11",
+    "esbuild": "^0.21.5",
+    "eslint": "^9.5.0",
+    "mocha": "^8.0.1",
+    "np": "^10.0.5",
+    "typescript": "^5.5.2"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "pretest": "node build.mjs",
+    "test": "mocha tests/**/*.test.mjs",
+    "release": "np"
+  }
+}

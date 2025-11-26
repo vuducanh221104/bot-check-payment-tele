@@ -1,0 +1,21 @@
+{
+  "refNo": "FT25330275485120",
+  "transactionId": "FT25330275485120",
+  "tranId": "FT25330275485120",
+  "transactionID": "FT25330275485120",
+  "postingDate": "",
+  "transactionDate": "26/11/2025",
+  "transactionTime": "14:36:29",
+  "accountNo": "",
+  "creditAmount": "2000",
+  "debitAmount": "0",
+  "currency": "VND",
+  "transactionCurrency": "VND",
+  "description": "CUSTOMER TNW10163. TU: VU DUC ANH",
+  "transactionDesc": "CUSTOMER TNW10163. TU: VU DUC ANH",
+  "availableBalance": "0",
+  "balanceAvailable": "0",
+  "beneficiaryAccount": "",
+  "type": "IN",
+  "amount": "2000"
+}
