@@ -3,14 +3,8 @@ name: Build and Push BotCheckPayment Image
 on:
   push:
     branches: [prod, develop]
-    paths:
-      - 'BotCheckPayment/**'
-      - '.github/workflows/bot-check-payment-docker-build-push.yml'
   pull_request:
     branches: [prod]
-    paths:
-      - 'BotCheckPayment/**'
-      - '.github/workflows/bot-check-payment-docker-build-push.yml'
   workflow_dispatch:
 
 env:
@@ -48,8 +42,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: ./BotCheckPayment
-          file: ./BotCheckPayment/Dockerfile
+          context: .
+          file: ./Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
