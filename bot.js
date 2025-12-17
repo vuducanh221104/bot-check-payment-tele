@@ -544,12 +544,15 @@ const fetchTransactionsV3 = async (accountNumber) => {
     const mb = await getMBInstance();
     const accountNo = accountNumber || MB_BANK_CARD_DEFAULT;
     
-    // Get date range: last 3 days
-    const today = new Date();
-    const threeDaysAgo = new Date(today);
-    threeDaysAgo.setDate(today.getDate() - 3);
+    // Get date range: last 7 days (tăng từ 3 lên 7 để đảm bảo không bỏ sót giao dịch)
+    // Sử dụng timezone Việt Nam để đảm bảo tính toán ngày chính xác
+    const now = new Date();
+    const vietnamTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
+    const today = new Date(vietnamTime.getFullYear(), vietnamTime.getMonth(), vietnamTime.getDate());
+    const sevenDaysAgo = new Date(today);
+    sevenDaysAgo.setDate(today.getDate() - 7);
     
-    const fromDate = formatDateForMB(threeDaysAgo);
+    const fromDate = formatDateForMB(sevenDaysAgo);
     const toDate = formatDateForMB(today);
     
     console.log(`📡 Đang lấy giao dịch từ MB Bank với tài khoản ${accountNo} (${fromDate} - ${toDate})`);
@@ -4121,5 +4124,14 @@ function removeNotifiOrderChatId(chatId) {
   saveNotifiOrderChatIds();
   console.log(`⚠️ Đã gỡ chat ID ${idStr} khỏi danh sách nhận thông báo CheckNotifiOrder.`);
   return { removed: true, reason: 'removed' };
+}
+
+
+}
+
+
+}
+
+
 }
 
