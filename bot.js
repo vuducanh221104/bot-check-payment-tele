@@ -29,6 +29,10 @@ let MB_BANK_CARD_DEFAULT = process.env.MB_BANK_CARD_DEFAULT;
 const MB_API_URL_V3 = process.env.API_CA_NHAN_URL_V3;
 const MB_API_URL_V1 = process.env.API_CA_NHAN_URL_V1;
 
+// API Canhan configuration
+const API_CANHAN_KEY = process.env.API_CANHAN_KEY;
+const API_CANHAN_BASE_URL = process.env.API_CANHAN_BASE_URL;
+
 // MongoDB configuration
 const MONGO_URI = process.env.MONGO_URI;
 const MONGO_DB_NAME = process.env.MONGO_DB_NAME;
@@ -152,6 +156,10 @@ const SUBSCRIBERS_FILE = path.join(__dirname, 'subscribers.json');
 const NOTIFI_ORDER_CHAT_IDS_FILE = path.join(__dirname, 'notifi_order_chat_ids.json');
 const PENDING_NOTIFICATIONS_FILE = path.join(__dirname, 'pending_notifications.json');
 const CONFIG_FILE = path.join(__dirname, '.env');
+const API_METHOD_FILE = path.join(__dirname, 'api_method.json');
+
+// API Method tracking (default: 'mbbank', fallback: 'apicanhan')
+let currentApiMethod = 'mbbank'; // 'mbbank' or 'apicanhan'
 
 // Store pending notifications (orders that were updated but notification failed)
 const pendingNotifications = new Map();
@@ -201,6 +209,27 @@ const loadPendingNotifications = () => {
       console.log(`📋 Đã tải ${pendingNotifications.size} đơn hàng chưa gửi thông báo`);
     }
   }
+};
+
+// Load API method from file
+const loadApiMethod = () => {
+  const data = readJsonFromFile(API_METHOD_FILE, 'phương thức API');
+  if (data && data.method && (data.method === 'mbbank' || data.method === 'apicanhan')) {
+    currentApiMethod = data.method;
+    console.log(`📡 Phương thức API hiện tại: ${currentApiMethod}`);
+  }
+};
+
+// Save API method to file
+const saveApiMethod = (method) => {
+  if (method !== 'mbbank' && method !== 'apicanhan') {
+    console.error('❌ Phương thức API không hợp lệ:', method);
+    return false;
+  }
+  currentApiMethod = method;
+  persistJsonToFile(API_METHOD_FILE, { method }, 'phương thức API');
+  console.log(`✅ Đã chuyển sang phương thức API: ${method}`);
+  return true;
 };
 
 // Save pending notifications to file
@@ -635,6 +664,141 @@ const fetchTransactionsV1 = async (accountNumber, fromDate = null, toDate = null
   } catch (error) {
     console.error('❌ Lỗi khi lấy lịch sử giao dịch từ MB Bank:', error);
     throw new Error(`Lỗi kết nối MB Bank: ${error.message}`);
+  }
+};
+
+// Helper to normalize transaction from API Canhan format to internal format
+const normalizeTransactionApicanhan = (apiTx) => {
+  // API Canhan returns: postingDate, transactionDate (both are strings like "22/12/2025 00:01:00")
+  const postDate = apiTx.postingDate || '';
+  const txDate = apiTx.transactionDate || '';
+  
+  // Split date and time
+  const postParts = postDate.split(' ');
+  const postingDate = postDate;
+  const postingDateOnly = postParts[0] || '';
+  const postingTime = postParts[1] || '';
+  
+  const txParts = txDate.split(' ');
+  const transactionDate = txParts[0] || '';
+  const transactionTime = txParts[1] || '';
+  
+  return {
+    refNo: apiTx.refNo || apiTx.tranId || '',
+    transactionId: apiTx.tranId || apiTx.refNo || '',
+    tranId: apiTx.tranId || apiTx.refNo || '',
+    transactionID: apiTx.tranId || apiTx.refNo || '',
+    postingDate: postingDate,
+    postingDateOnly: postingDateOnly,
+    postingTime: postingTime,
+    transactionDate: transactionDate,
+    transactionTime: transactionTime,
+    accountNo: apiTx.accountNo || '',
+    creditAmount: apiTx.creditAmount || '0',
+    debitAmount: apiTx.debitAmount || '0',
+    currency: apiTx.currency || 'VND',
+    transactionCurrency: apiTx.currency || 'VND',
+    description: apiTx.description || '',
+    transactionDesc: apiTx.description || '',
+    availableBalance: apiTx.availableBalance || '0',
+    balanceAvailable: apiTx.availableBalance || '0',
+    beneficiaryAccount: apiTx.beneficiaryAccount || '',
+    type: normalizeAmount(apiTx.creditAmount) > 0 ? 'IN' : 'OUT',
+    amount: normalizeAmount(apiTx.creditAmount) > 0 ? apiTx.creditAmount : apiTx.debitAmount,
+  };
+};
+
+// Function to fetch transactions from API Canhan
+const fetchTransactionsApicanhan = async (accountNumber) => {
+  if (!MB_USERNAME || !MB_PASSWORD) {
+    throw new Error('Vui lòng cấu hình MB_USERNAME và MB_PASSWORD trong file .env');
+  }
+
+  try {
+    const accountNo = accountNumber || MB_BANK_CARD_DEFAULT;
+    
+    // Encode password for URL (handle special characters like !)
+    const encodedPassword = encodeURIComponent(MB_PASSWORD);
+    
+    // Build API URL
+    const apiUrl = `${API_CANHAN_BASE_URL}?key=${API_CANHAN_KEY}&username=${MB_USERNAME}&password=${encodedPassword}&accountNo=${accountNo}`;
+    
+    console.log(`📡 Đang lấy giao dịch từ API Canhan với tài khoản ${accountNo}`);
+    
+    const response = await axios.get(apiUrl, {
+      timeout: 30000,
+    });
+
+    if (!response.data) {
+      console.log('⚠️ API Canhan trả về dữ liệu rỗng');
+      return [];
+    }
+
+    // Check for error response
+    if (response.data.status === 'error') {
+      throw new Error(`API Canhan lỗi: ${response.data.message || 'Unknown error'}`);
+    }
+
+    // Check for success response
+    if (response.data.status !== 'success') {
+      throw new Error(`API Canhan trả về status không hợp lệ: ${response.data.status}`);
+    }
+
+    // Get transactions from TranList
+    const tranList = response.data.TranList || [];
+    
+    if (!Array.isArray(tranList) || tranList.length === 0) {
+      console.log('📭 API Canhan không có giao dịch nào');
+      return [];
+    }
+
+    // Normalize transactions
+    const normalizedTransactions = tranList.map(normalizeTransactionApicanhan);
+    
+    // Sort by transaction date (newest first)
+    normalizedTransactions.sort((a, b) => {
+      const dateA = new Date(`${a.transactionDate} ${a.transactionTime || '00:00:00'}`);
+      const dateB = new Date(`${b.transactionDate} ${b.transactionTime || '00:00:00'}`);
+      return dateB - dateA;
+    });
+
+    console.log(`✅ API Canhan trả về ${normalizedTransactions.length} giao dịch`);
+    return normalizedTransactions;
+  } catch (error) {
+    console.error('❌ Lỗi khi lấy giao dịch từ API Canhan:', error);
+    if (error.response) {
+      throw new Error(`Lỗi API Canhan: ${error.response.status} - ${error.response.data?.message || error.message}`);
+    }
+    throw new Error(`Lỗi kết nối API Canhan: ${error.message}`);
+  }
+};
+
+// Unified function to fetch transactions (with fallback)
+const fetchTransactionsWithFallback = async (accountNumber) => {
+  // Try current API method first
+  try {
+    if (currentApiMethod === 'apicanhan') {
+      return await fetchTransactionsApicanhan(accountNumber);
+    } else {
+      return await fetchTransactionsV3(accountNumber);
+    }
+  } catch (error) {
+    console.error(`❌ Lỗi với phương thức API ${currentApiMethod}:`, error.message);
+    
+    // Fallback to alternative method
+    const fallbackMethod = currentApiMethod === 'apicanhan' ? 'mbbank' : 'apicanhan';
+    console.log(`🔄 Chuyển sang phương thức API dự phòng: ${fallbackMethod}`);
+    
+    try {
+      if (fallbackMethod === 'apicanhan') {
+        return await fetchTransactionsApicanhan(accountNumber);
+      } else {
+        return await fetchTransactionsV3(accountNumber);
+      }
+    } catch (fallbackError) {
+      console.error(`❌ Lỗi với phương thức API dự phòng ${fallbackMethod}:`, fallbackError.message);
+      throw new Error(`Cả hai phương thức API đều lỗi. ${currentApiMethod}: ${error.message}, ${fallbackMethod}: ${fallbackError.message}`);
+    }
   }
 };
 
@@ -1751,6 +1915,150 @@ bot.command('set_default_account_mb_bank', (ctx) => {
     }
   } catch (error) {
     console.error('Set default account error:', error);
+    ctx.reply(`❌ Lỗi: ${error.message}`);
+  }
+});
+
+// Command: /switch_api_apicanhan - Switch to API Canhan
+bot.command('switch_api_apicanhan', async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  
+  try {
+    if (currentApiMethod === 'apicanhan') {
+      return ctx.reply(
+        `ℹ️ Đang sử dụng phương thức: API Canhan\n\n` +
+        `Không cần chuyển đổi.`
+      );
+    }
+    
+    // Test the new method before switching
+    ctx.reply(`⏳ Đang kiểm tra API Canhan...`);
+    
+    const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
+    let testTransactions = [];
+    
+    try {
+      testTransactions = await fetchTransactionsApicanhan(accountNumber);
+      
+      // Save the new method
+      const saved = saveApiMethod('apicanhan');
+      
+      if (saved) {
+        ctx.reply(
+          `✅ Đã chuyển sang phương thức API: API Canhan\n\n` +
+          `📊 Tìm thấy ${testTransactions.length} giao dịch trong lần kiểm tra.\n\n` +
+          `🔄 Bot sẽ sử dụng phương thức này cho các lần kiểm tra tiếp theo.`
+        );
+      } else {
+        ctx.reply(`❌ Không thể lưu phương thức API mới.`);
+      }
+    } catch (testError) {
+      ctx.reply(
+        `❌ Không thể kết nối với API Canhan:\n\n` +
+        `${testError.message}\n\n` +
+        `⚠️ Giữ nguyên phương thức hiện tại: MB Bank Library`
+      );
+    }
+  } catch (error) {
+    console.error('Switch API method error:', error);
+    ctx.reply(`❌ Lỗi: ${error.message}`);
+  }
+});
+
+// Command: /switch_api_mbbank - Switch to MB Bank Library
+bot.command('switch_api_mbbank', async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  
+  try {
+    if (currentApiMethod === 'mbbank') {
+      return ctx.reply(
+        `ℹ️ Đang sử dụng phương thức: MB Bank Library\n\n` +
+        `Không cần chuyển đổi.`
+      );
+    }
+    
+    // Test the new method before switching
+    ctx.reply(`⏳ Đang kiểm tra MB Bank Library...`);
+    
+    const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
+    let testTransactions = [];
+    
+    try {
+      testTransactions = await fetchTransactionsV3(accountNumber);
+      
+      // Save the new method
+      const saved = saveApiMethod('mbbank');
+      
+      if (saved) {
+        ctx.reply(
+          `✅ Đã chuyển sang phương thức API: MB Bank Library\n\n` +
+          `📊 Tìm thấy ${testTransactions.length} giao dịch trong lần kiểm tra.\n\n` +
+          `🔄 Bot sẽ sử dụng phương thức này cho các lần kiểm tra tiếp theo.`
+        );
+      } else {
+        ctx.reply(`❌ Không thể lưu phương thức API mới.`);
+      }
+    } catch (testError) {
+      ctx.reply(
+        `❌ Không thể kết nối với MB Bank Library:\n\n` +
+        `${testError.message}\n\n` +
+        `⚠️ Giữ nguyên phương thức hiện tại: API Canhan`
+      );
+    }
+  } catch (error) {
+    console.error('Switch API method error:', error);
+    ctx.reply(`❌ Lỗi: ${error.message}`);
+  }
+});
+
+// Command: /switch_apicanhan_test - Test API Canhan without switching
+bot.command('switch_apicanhan_test', async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  
+  try {
+    ctx.reply(`⏳ Đang test API Canhan (không thay đổi phương thức hiện tại)...`);
+    
+    const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
+    
+    try {
+      const testTransactions = await fetchTransactionsApicanhan(accountNumber);
+      
+      // Format transaction details for display
+      let message = `✅ TEST API CANHAN THÀNH CÔNG\n\n`;
+      message += `📊 Tìm thấy ${testTransactions.length} giao dịch\n\n`;
+      message += `🔧 Phương thức hiện tại: ${currentApiMethod === 'mbbank' ? 'MB Bank Library' : 'API Canhan'}\n`;
+      message += `ℹ️ Phương thức hiện tại KHÔNG bị thay đổi\n\n`;
+      
+      if (testTransactions.length > 0) {
+        message += `📋 GIAO DỊCH MỚI NHẤT:\n`;
+        message += `━━━━━━━━━━━━━━━━━━━━\n`;
+        const latest = testTransactions[0];
+        message += `🆔 Transaction ID: ${latest.transactionID || latest.transactionId || 'N/A'}\n`;
+        message += `📅 Ngày: ${latest.transactionDate || 'N/A'} ${latest.transactionTime || ''}\n`;
+        message += `💰 Số tiền: ${latest.creditAmount || '0'} VND\n`;
+        message += `📝 Nội dung: ${latest.description || 'N/A'}\n`;
+        message += `💳 Số dư: ${latest.availableBalance || '0'} VND\n`;
+        
+        if (testTransactions.length > 1) {
+          message += `\n... và ${testTransactions.length - 1} giao dịch khác`;
+        }
+      }
+      
+      message += `\n\n💡 Để chuyển sang API Canhan, dùng lệnh:\n`;
+      message += `/switch_api_apicanhan`;
+      
+      ctx.reply(message);
+    } catch (testError) {
+      ctx.reply(
+        `❌ TEST API CANHAN THẤT BẠI\n\n` +
+        `📋 Chi tiết lỗi:\n` +
+        `${testError.message}\n\n` +
+        `🔧 Phương thức hiện tại: ${currentApiMethod === 'mbbank' ? 'MB Bank Library' : 'API Canhan'}\n` +
+        `ℹ️ Phương thức hiện tại KHÔNG bị thay đổi`
+      );
+    }
+  } catch (error) {
+    console.error('Test API Canhan error:', error);
     ctx.reply(`❌ Lỗi: ${error.message}`);
   }
 });
@@ -3461,9 +3769,9 @@ const checkTransactionsAndMatchOrders = async (db) => {
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
     const orders = db.collection(ORDER_COLLECTION);
 
-    // Fetch transactions from MB Bank API
-    console.log(`[${timestamp}] 📡 Đang lấy giao dịch từ MB Bank API...`);
-    const transactions = await fetchTransactionsV3(accountNumber);
+    // Fetch transactions from API (with fallback)
+    console.log(`[${timestamp}] 📡 Đang lấy giao dịch từ API (phương thức: ${currentApiMethod})...`);
+    const transactions = await fetchTransactionsWithFallback(accountNumber);
 
     if (!transactions || transactions.length === 0) {
       console.log(`[${timestamp}] 📭 Không có giao dịch nào`);
@@ -3704,15 +4012,15 @@ const checkTodayTransactions = async () => {
   
   try {
     if (!MB_USERNAME || !MB_PASSWORD) {
-      console.error(`[${timestamp}] ❌ Chưa cấu hình MB_USERNAME và MB_PASSWORD`);cl
+      console.error(`[${timestamp}] ❌ Chưa cấu hình MB_USERNAME và MB_PASSWORD`);
       return;
     }
 
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
 
-    console.log(`[${timestamp}] 📅 Đang lấy giao dịch cho tài khoản ${accountNumber} từ API v3`);
+    console.log(`[${timestamp}] 📅 Đang lấy giao dịch cho tài khoản ${accountNumber} từ API (phương thức: ${currentApiMethod})`);
 
-    const transactions = await fetchTransactionsV3(accountNumber);
+    const transactions = await fetchTransactionsWithFallback(accountNumber);
 
     console.log(`[${timestamp}] 📊 Tổng số giao dịch tìm thấy: ${transactions?.length || 0}`);
 
@@ -3889,6 +4197,7 @@ loadAdmins();
 loadSubscribers();
 loadNotifiOrderChatIds();
 loadPendingNotifications();
+loadApiMethod();
 
 // MongoDB client and database reference
 let mongoClient = null;
