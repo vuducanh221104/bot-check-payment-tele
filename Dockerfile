@@ -29,7 +29,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev || npm install --omit=dev
 
 # Copy toàn bộ project
-COPY . .dã 
+COPY . . 
 
 # Build mbbank module nếu có src/ (cần devDependencies để build)
 WORKDIR /app/mbbank
