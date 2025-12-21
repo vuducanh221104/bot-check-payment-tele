@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+yarn-error.log
+.env
+.env.*
+.git
+.DS_Store
+*.log
+*.md
+# Không ignore mbbank - cần thiết cho runtime
+# mbbank/
+

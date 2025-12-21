@@ -19,28 +19,31 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Set environment to production
+ENV NODE_ENV=production
 
-# Install dependencies
-RUN npm ci --only=production
+# Copy lockfile trước để cache dependency layer
+COPY package.json package-lock.json ./
 
-# Copy mbbank directory (contains native modules and model)
-COPY mbbank ./mbbank
+# Prefer npm ci; fallback to npm install if lockfile mismatch
+RUN npm ci --omit=dev || npm install --omit=dev
 
-# Copy application files
-COPY bot.js ./
-COPY index.js ./
-COPY *.json ./
+# Copy toàn bộ project
+COPY . .
+
+# Build mbbank module nếu có src/ (cần devDependencies để build)
+WORKDIR /app/mbbank
+RUN if [ -d "src" ]; then \
+      npm install && npm run build; \
+    else \
+      echo "mbbank/dist/ already exists, skipping build"; \
+    fi
+
+# Quay lại working directory chính
+WORKDIR /app
 
 # Create directory for data files if needed
 RUN mkdir -p /app/data
-
-# Expose port if needed (adjust if your bot uses a port)
-# EXPOSE 3000
-
-# Set environment to production
-ENV NODE_ENV=production
 
 # Run the bot
 CMD ["npm", "start"]

@@ -4,6 +4,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
+    "build": "if [ -d 'mbbank/src' ]; then cd mbbank && npm install && npm run build; else echo 'mbbank/dist/ already exists, skipping build'; fi",
+    "prebuild": "echo 'Checking mbbank module...'",
     "start": "node bot.js",
     "bot": "node bot.js"
   },
