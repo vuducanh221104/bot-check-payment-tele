@@ -773,7 +773,22 @@ const fetchTransactionsApicanhan = async (accountNumber) => {
   }
 };
 
-// Unified function to fetch transactions (with fallback)
+// Unified function to fetch transactions (no fallback - use current method only)
+const fetchTransactions = async (accountNumber, fromDate = null, toDate = null) => {
+  // Check current API method and call appropriate function
+  // When using apicanhan, completely avoid MB Bank calls
+  if (currentApiMethod === 'apicanhan') {
+    // Use API Canhan - no MB Bank calls
+    console.log(`📡 Sử dụng API Canhan (currentApiMethod: ${currentApiMethod})`);
+    return await fetchTransactionsApicanhan(accountNumber);
+  } else {
+    // Use MB Bank V1 (only when currentApiMethod is 'mbbank')
+    console.log(`📡 Sử dụng MB Bank V1 (currentApiMethod: ${currentApiMethod})`);
+    return await fetchTransactionsV1(accountNumber, fromDate, toDate);
+  }
+};
+
+// Unified function to fetch transactions (with fallback) - kept for backward compatibility
 const fetchTransactionsWithFallback = async (accountNumber) => {
   // Try current API method first
   try {
@@ -854,7 +869,7 @@ bot.command('balance', async (ctx) => {
     ctx.reply('⏳ Đang lấy thông tin số dư...');
     
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply('❌ Không tìm thấy giao dịch nào.');
@@ -924,7 +939,7 @@ bot.command('transactions', async (ctx) => {
     
     ctx.reply('⏳ Đang lấy lịch sử giao dịch từ API v1...');
     
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -1014,7 +1029,7 @@ bot.command('transactions_with_date', async (ctx) => {
     ctx.reply('⏳ Đang lấy lịch sử giao dịch từ API v1...');
     
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -1099,7 +1114,7 @@ bot.command('transaction_1_day', async (ctx) => {
     ctx.reply('⏳ Đang lấy giao dịch từ hôm qua đến hôm nay...');
     
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -1222,7 +1237,7 @@ bot.command('export_excel_transactions_all', async (ctx) => {
     
     ctx.reply('⏳ Đang lấy lịch sử giao dịch và tạo file Excel...');
     
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -1306,7 +1321,7 @@ bot.command('excel_transactions_with_date', async (ctx) => {
     ctx.reply('⏳ Đang lấy lịch sử giao dịch và tạo file Excel...');
     
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -1378,7 +1393,7 @@ bot.command('excel_transactions_with_date', async (ctx) => {
 //     
 //     ctx.reply('⏳ Đang lấy lịch sử giao dịch từ API v1...');
 //     
-//     const transactions = await fetchTransactionsV1(accountNumber);
+//     const transactions = await fetchTransactions(accountNumber);
 //     
 //     if (!transactions || transactions.length === 0) {
 //       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -2210,7 +2225,7 @@ bot.command('transaction_today', async (ctx) => {
     ctx.reply('⏳ Đang lấy giao dịch hôm nay...');
     
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -2291,7 +2306,7 @@ bot.command('find_transaction', async (ctx) => {
     ctx.reply('⏳ Đang tìm kiếm giao dịch...');
     
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -2364,7 +2379,7 @@ bot.command('stats_today', async (ctx) => {
     ctx.reply('⏳ Đang tính toán thống kê hôm nay...');
     
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -2464,7 +2479,7 @@ bot.command('stats_month', async (ctx) => {
     ctx.reply('⏳ Đang tính toán thống kê tháng...');
     
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -2549,7 +2564,7 @@ bot.command('excel_today', async (ctx) => {
     ctx.reply('⏳ Đang lấy giao dịch hôm nay và tạo file Excel...');
     
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -2694,7 +2709,7 @@ bot.command('search_amount', async (ctx) => {
     ctx.reply('⏳ Đang tìm kiếm giao dịch...');
     
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -2776,7 +2791,7 @@ bot.command('search_order', async (ctx) => {
     ctx.reply('⏳ Đang tìm kiếm giao dịch theo mã đơn hàng...');
     
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
-    const transactions = await fetchTransactionsV1(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
     
     if (!transactions || transactions.length === 0) {
       return ctx.reply(`📭 Không có giao dịch nào\n💳 Tài khoản: ${accountNumber}`);
@@ -3769,9 +3784,9 @@ const checkTransactionsAndMatchOrders = async (db) => {
     const accountNumber = MB_BANK_CARD_DEFAULT || '3999919072004';
     const orders = db.collection(ORDER_COLLECTION);
 
-    // Fetch transactions from API (with fallback)
+    // Fetch transactions from API (no fallback - use current method only)
     console.log(`[${timestamp}] 📡 Đang lấy giao dịch từ API (phương thức: ${currentApiMethod})...`);
-    const transactions = await fetchTransactionsWithFallback(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
 
     if (!transactions || transactions.length === 0) {
       console.log(`[${timestamp}] 📭 Không có giao dịch nào`);
@@ -4020,7 +4035,7 @@ const checkTodayTransactions = async () => {
 
     console.log(`[${timestamp}] 📅 Đang lấy giao dịch cho tài khoản ${accountNumber} từ API (phương thức: ${currentApiMethod})`);
 
-    const transactions = await fetchTransactionsWithFallback(accountNumber);
+    const transactions = await fetchTransactions(accountNumber);
 
     console.log(`[${timestamp}] 📊 Tổng số giao dịch tìm thấy: ${transactions?.length || 0}`);
 
