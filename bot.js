@@ -4246,6 +4246,7 @@ const initMongoDB = async () => {
 // Start interval job BEFORE launching bot to ensure it's always running
 console.log('⏰ Đang khởi động interval job kiểm tra giao dịch mỗi 10 giây...');
 let intervalJob = null;
+let clearLogsJob = null;
 
 // Test bot token first
 bot.telegram.getMe().then(async (botInfo) => {
@@ -4269,6 +4270,24 @@ bot.telegram.getMe().then(async (botInfo) => {
   console.log('✅ Interval job đã được khởi động!');
   console.log('📅 Timezone: Asia/Ho_Chi_Minh');
   console.log('⏱️  Lịch chạy: Mỗi 10 giây');
+  
+  // Cronjob để xóa logs terminal mỗi ngày 2 lần (8h sáng và 20h tối)
+  clearLogsJob = cron.schedule('0 8,20 * * *', () => {
+    const timestamp = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+    console.log(`\n[${timestamp}] 🧹 CRONJOB: Xóa logs terminal...`);
+    console.clear();
+    console.log(`[${timestamp}] ✅ Đã xóa logs terminal thành công`);
+    console.log('🤖 Bot vẫn đang hoạt động bình thường');
+    console.log('📅 Timezone: Asia/Ho_Chi_Minh');
+    console.log('⏱️  Lịch chạy: Mỗi 10 giây');
+    console.log('🧹 Xóa logs: 8h sáng và 20h tối mỗi ngày');
+  }, {
+    scheduled: true,
+    timezone: 'Asia/Ho_Chi_Minh'
+  });
+  
+  console.log('✅ Cronjob xóa logs terminal đã được khởi động!');
+  console.log('🧹 Lịch xóa logs: 8h sáng và 20h tối mỗi ngày (GMT+7)');
   
   // Launch bot after token is verified
   bot.launch().then(() => {
@@ -4308,6 +4327,9 @@ process.once('SIGINT', async () => {
   if (intervalJob) {
     clearInterval(intervalJob);
   }
+  if (clearLogsJob) {
+    clearLogsJob.stop();
+  }
   if (mongoClient) {
     await mongoClient.close();
   }
@@ -4319,6 +4341,9 @@ process.once('SIGTERM', async () => {
   console.log('\n⏹️ Shutting down...');
   if (intervalJob) {
     clearInterval(intervalJob);
+  }
+  if (clearLogsJob) {
+    clearLogsJob.stop();
   }
   if (mongoClient) {
     await mongoClient.close();
