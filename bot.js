@@ -4243,9 +4243,9 @@ const initMongoDB = async () => {
   }
 };
 
-// Start cron job BEFORE launching bot to ensure it's always running
-console.log('⏰ Đang khởi động cron job kiểm tra giao dịch mỗi 1 phút...');
-let cronJob = null;
+// Start interval job BEFORE launching bot to ensure it's always running
+console.log('⏰ Đang khởi động interval job kiểm tra giao dịch mỗi 10 giây...');
+let intervalJob = null;
 
 // Test bot token first
 bot.telegram.getMe().then(async (botInfo) => {
@@ -4256,22 +4256,19 @@ bot.telegram.getMe().then(async (botInfo) => {
   // Initialize MongoDB connection
   await initMongoDB();
   
-  // Start cron job after MongoDB is connected
-  cronJob = cron.schedule('* * * * *', () => {
+  // Start interval job after MongoDB is connected (check every 10 seconds)
+  intervalJob = setInterval(() => {
     const now = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
-    console.log(`\n[${now}] ⏰ CRON TRIGGER: Chạy kiểm tra giao dịch và so khớp đơn hàng...`);
+    console.log(`\n[${now}] ⏰ INTERVAL TRIGGER: Chạy kiểm tra giao dịch và so khớp đơn hàng...`);
     if (db) {
       checkTransactionsAndMatchOrders(db);
     } else {
       console.log(`[${now}] ⚠️ MongoDB chưa kết nối, bỏ qua kiểm tra`);
     }
-  }, {
-    scheduled: true,
-    timezone: "Asia/Ho_Chi_Minh"
-  });
-  console.log('✅ Cron job đã được khởi động!');
+  }, 10000); // 10 seconds = 10000ms
+  console.log('✅ Interval job đã được khởi động!');
   console.log('📅 Timezone: Asia/Ho_Chi_Minh');
-  console.log('⏱️  Lịch chạy: Mỗi phút (* * * * *)');
+  console.log('⏱️  Lịch chạy: Mỗi 10 giây');
   
   // Launch bot after token is verified
   bot.launch().then(() => {
@@ -4308,8 +4305,8 @@ bot.telegram.getMe().then(async (botInfo) => {
 // Enable graceful stop
 process.once('SIGINT', async () => {
   console.log('\n⏹️ Shutting down...');
-  if (cronJob) {
-    cronJob.stop();
+  if (intervalJob) {
+    clearInterval(intervalJob);
   }
   if (mongoClient) {
     await mongoClient.close();
@@ -4320,8 +4317,8 @@ process.once('SIGINT', async () => {
 
 process.once('SIGTERM', async () => {
   console.log('\n⏹️ Shutting down...');
-  if (cronJob) {
-    cronJob.stop();
+  if (intervalJob) {
+    clearInterval(intervalJob);
   }
   if (mongoClient) {
     await mongoClient.close();
