@@ -4244,7 +4244,9 @@ const initMongoDB = async () => {
 };
 
 // Start interval job BEFORE launching bot to ensure it's always running
-console.log('⏰ Đang khởi động interval job kiểm tra giao dịch mỗi 10 giây...');
+// Allow override via env for production tuning (default: 5 seconds)
+const CHECK_INTERVAL_MS = Number.parseInt(process.env.CHECK_INTERVAL_MS || '5000', 10);
+console.log(`⏰ Đang khởi động interval job kiểm tra giao dịch mỗi ${Math.round(CHECK_INTERVAL_MS / 1000)} giây...`);
 let intervalJob = null;
 let clearLogsJob = null;
 
@@ -4257,7 +4259,7 @@ bot.telegram.getMe().then(async (botInfo) => {
   // Initialize MongoDB connection
   await initMongoDB();
   
-  // Start interval job after MongoDB is connected (check every 10 seconds)
+  // Start interval job after MongoDB is connected
   intervalJob = setInterval(() => {
     const now = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
     console.log(`\n[${now}] ⏰ INTERVAL TRIGGER: Chạy kiểm tra giao dịch và so khớp đơn hàng...`);
@@ -4266,10 +4268,10 @@ bot.telegram.getMe().then(async (botInfo) => {
     } else {
       console.log(`[${now}] ⚠️ MongoDB chưa kết nối, bỏ qua kiểm tra`);
     }
-  }, 10000); // 10 seconds = 10000ms
+  }, CHECK_INTERVAL_MS); // default: 5000ms
   console.log('✅ Interval job đã được khởi động!');
   console.log('📅 Timezone: Asia/Ho_Chi_Minh');
-  console.log('⏱️  Lịch chạy: Mỗi 10 giây');
+  console.log(`⏱️  Lịch chạy: Mỗi ${Math.round(CHECK_INTERVAL_MS / 1000)} giây`);
   
   // Cronjob để xóa logs terminal mỗi ngày 2 lần (8h sáng và 20h tối)
   clearLogsJob = cron.schedule('0 8,20 * * *', () => {
@@ -4279,7 +4281,7 @@ bot.telegram.getMe().then(async (botInfo) => {
     console.log(`[${timestamp}] ✅ Đã xóa logs terminal thành công`);
     console.log('🤖 Bot vẫn đang hoạt động bình thường');
     console.log('📅 Timezone: Asia/Ho_Chi_Minh');
-    console.log('⏱️  Lịch chạy: Mỗi 10 giây');
+    console.log(`⏱️  Lịch chạy: Mỗi ${Math.round(CHECK_INTERVAL_MS / 1000)} giây`);
     console.log('🧹 Xóa logs: 8h sáng và 20h tối mỗi ngày');
   }, {
     scheduled: true,
