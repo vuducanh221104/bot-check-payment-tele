@@ -1608,6 +1608,8 @@ const buildHelpMessage = ({ isAdminUser = false } = {}) => {
     '/check_cron_status - Kiểm tra cronjob có chạy đúng mỗi phút không',
     '/last_transactions - Trả về giao dịch gần nhất',
     '/bot_status - Xem trạng thái bot và cấu hình',
+    '/stopbot - Dừng bot tự động kiểm tra giao dịch',
+    '/startbot - Bắt đầu lại bot tự động kiểm tra giao dịch',
     '/logs - Xem logs và trạng thái hệ thống',
     '/reconnect_db - Reconnect đến MongoDB database',
     '/reconnect_server - Reconnect đến Telegram API server',
@@ -2638,7 +2640,11 @@ bot.command('bot_status', (ctx) => {
     message += `   • Admins: ${adminCount}\n`;
     message += `   • Tổng: ${subscriberCount + adminCount}\n\n`;
     message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
-    message += `⏰ Trạng thái Cron:\n`;
+    message += `⏰ Trạng thái Bot:\n`;
+    message += `   • Trạng thái: ${isBotRunning ? '✅ Đang chạy' : '❌ Đã dừng'}\n`;
+    message += `   • Auto-check: ${isBotRunning ? '✅ Bật' : '❌ Tắt'}\n\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+    message += `⏱️ Trạng thái Cron:\n`;
     
     if (lastCronCheckTime) {
       const lastCheck = new Date(lastCronCheckTime);
@@ -2683,6 +2689,69 @@ bot.command('bot_status', (ctx) => {
     console.error('Bot status error:', error);
     ctx.reply(`❌ Lỗi: ${error.message}`);
   }
+});
+
+// Command: /stopbot - Stop the auto-check bot
+bot.command('stopbot', (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  
+  if (!isBotRunning) {
+    return ctx.reply(
+      'ℹ️ Bot đã dừng hoạt động rồi.\n' +
+      '💡 Sử dụng /startbot để bắt đầu lại.'
+    );
+  }
+  
+  isBotRunning = false;
+  
+  // Stop the interval job
+  if (intervalJob) {
+    clearInterval(intervalJob);
+    intervalJob = null;
+  }
+  
+  console.log('⏹️ Bot đã được dừng bởi admin:', ctx.from.id);
+  ctx.reply(
+    '✅ Bot đã dừng hoạt động!\n\n' +
+    '⏹️ Tự động kiểm tra giao dịch đã được vô hiệu hóa.\n' +
+    '💬 Bot vẫn lắng nghe lệnh nhưng sẽ không tự động kiểm tra giao dịch.\n\n' +
+    '💡 Sử dụng /startbot để bắt đầu lại.'
+  );
+});
+
+// Command: /startbot - Start the auto-check bot
+bot.command('startbot', (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  
+  if (isBotRunning) {
+    return ctx.reply(
+      'ℹ️ Bot đang hoạt động rồi.\n' +
+      '💡 Sử dụng /stopbot để dừng lại.'
+    );
+  }
+  
+  isBotRunning = true;
+  
+  // Restart the interval job
+  if (!intervalJob) {
+    intervalJob = setInterval(() => {
+      const now = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      console.log(`\n[${now}] ⏰ INTERVAL TRIGGER: Chạy kiểm tra giao dịch và so khớp đơn hàng...`);
+      if (db) {
+        checkTransactionsAndMatchOrders(db);
+      } else {
+        console.log(`[${now}] ⚠️ MongoDB chưa kết nối, bỏ qua kiểm tra`);
+      }
+    }, CHECK_INTERVAL_MS);
+  }
+  
+  console.log('▶️ Bot đã được khởi động lại bởi admin:', ctx.from.id);
+  ctx.reply(
+    '✅ Bot đã bắt đầu hoạt động!\n\n' +
+    '▶️ Tự động kiểm tra giao dịch đã được kích hoạt.\n' +
+    `⏱️ Tần suất kiểm tra: mỗi ${Math.round(CHECK_INTERVAL_MS / 1000)} giây.\n\n` +
+    '💡 Sử dụng /stopbot để dừng lại.'
+  );
 });
 
 // Command: /search_amount - Search transactions by amount
@@ -2901,7 +2970,7 @@ bot.command('logs', async (ctx) => {
     
     // Cron job status
     message += `⏰ Cron Job Status:\n`;
-    message += `   • Trạng thái: ${cronJob ? '✅ Đang chạy' : '❌ Chưa khởi động'}\n`;
+    message += `   • Trạng thái: ${isBotRunning ? '✅ Đang chạy' : '❌ Chưa khởi động'}\n`;
     if (lastCronCheckTime) {
       const lastCheck = new Date(lastCronCheckTime);
       const timeDiff = Math.floor((Date.now() - lastCronCheckTime) / 1000);
@@ -4250,6 +4319,9 @@ console.log(`⏰ Đang khởi động interval job kiểm tra giao dịch mỗi 
 let intervalJob = null;
 let clearLogsJob = null;
 
+// Bot running status - to control start/stop of auto-check
+let isBotRunning = true;
+
 // Test bot token first
 bot.telegram.getMe().then(async (botInfo) => {
   console.log('✅ Kết nối thành công!');
@@ -4269,7 +4341,7 @@ bot.telegram.getMe().then(async (botInfo) => {
       console.log(`[${now}] ⚠️ MongoDB chưa kết nối, bỏ qua kiểm tra`);
     }
   }, CHECK_INTERVAL_MS); // default: 5000ms
-  console.log('✅ Interval job đã được khởi động!');
+  console.log(`✅ Interval job đã được khởi động! (isBotRunning: ${isBotRunning})`);
   console.log('📅 Timezone: Asia/Ho_Chi_Minh');
   console.log(`⏱️  Lịch chạy: Mỗi ${Math.round(CHECK_INTERVAL_MS / 1000)} giây`);
   
@@ -4294,6 +4366,7 @@ bot.telegram.getMe().then(async (botInfo) => {
   // Launch bot after token is verified
   bot.launch().then(() => {
     console.log('✅ Bot đã sẵn sàng và đang lắng nghe!');
+    console.log(`🤖 Auto-check: ${isBotRunning ? 'BẬT' : 'TẮT'}`);
     console.log('💬 Bot đang chờ tin nhắn...');
     
     // Run initial check
