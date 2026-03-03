@@ -1,16 +1,16 @@
 {
-  "refNo": "FT26017760023936",
-  "transactionId": "FT26017760023936",
-  "tranId": "FT26017760023936",
-  "transactionID": "FT26017760023936",
-  "postingDate": "17/01/2026 23:59:59",
-  "postingDateOnly": "17/01/2026",
+  "refNo": "FT26023629606825",
+  "transactionId": "FT26023629606825",
+  "tranId": "FT26023629606825",
+  "transactionID": "FT26023629606825",
+  "postingDate": "23/01/2026 23:59:59",
+  "postingDateOnly": "23/01/2026",
   "postingTime": "23:59:59",
-  "transactionDate": "17/01/2026",
-  "transactionTime": "15:19:49",
+  "transactionDate": "23/01/2026",
+  "transactionTime": "17:15:36",
   "accountNo": "01122899999999",
   "creditAmount": "0",
-  "debitAmount": "934897",
+  "debitAmount": "2311862",
   "currency": "VND",
   "transactionCurrency": "VND",
   "description": "CUSTOMER VU DUC ANH chuyen tien",
@@ -19,5 +19,5 @@
   "balanceAvailable": "0",
   "beneficiaryAccount": "",
   "type": "OUT",
-  "amount": "934897"
+  "amount": "2311862"
 }
