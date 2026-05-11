@@ -29,9 +29,9 @@ let MB_BANK_CARD_DEFAULT = process.env.MB_BANK_CARD_DEFAULT;
 const MB_API_URL_V3 = process.env.API_CA_NHAN_URL_V3;
 const MB_API_URL_V1 = process.env.API_CA_NHAN_URL_V1;
 
-// API Canhan configuration
-const API_CANHAN_KEY = process.env.API_CANHAN_KEY;
-const API_CANHAN_BASE_URL = process.env.API_CANHAN_BASE_URL;
+// External MB API configuration. Kept under the API_CANHAN_* env names so the
+// existing switch/test commands and api_method.json continue to work.
+const API_CANHAN_BASE_URL = process.env.API_CANHAN_BASE_URL || 'http://localhost:5001/transactions/MB';
 
 // MongoDB configuration
 const MONGO_URI = process.env.MONGO_URI;
@@ -337,12 +337,62 @@ const saveLastTransaction = (transaction) => {
   lastTransactionCache = transaction;
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const sendTelegramMessageSafely = async (userId, message, timestamp) => {
+  try {
+    if (message.length > 4000) {
+      const chunks = message.match(/[\s\S]{1,4000}/g) || [];
+      for (const chunk of chunks) {
+        await bot.telegram.sendMessage(userId, chunk);
+        await sleep(350);
+      }
+    } else {
+      await bot.telegram.sendMessage(userId, message);
+    }
+    await sleep(350);
+    return true;
+  } catch (error) {
+    const retryAfter = error.response?.parameters?.retry_after;
+    console.error(`[${timestamp}] ❌ Không thể gửi tin nhắn đến user ${userId}:`, error.message);
+
+    if (error.response?.error_code === 429 && retryAfter) {
+      console.log(`[${timestamp}] ⏳ Telegram giới hạn user ${userId}, chờ ${retryAfter}s trước khi gửi tiếp`);
+      await sleep((retryAfter + 1) * 1000);
+      return false;
+    }
+
+    if (error.response?.error_code === 403 || error.response?.error_code === 400) {
+      removeSubscriber(userId, `Telegram error ${error.response?.error_code}`);
+    }
+
+    return false;
+  }
+};
+
 const normalizeAmount = (value) => {
   if (value === null || value === undefined) return 0;
   if (typeof value === 'number') return value;
   const cleaned = value.toString().replace(/[^0-9.-]/g, '');
   const parsed = parseFloat(cleaned);
   return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const parseVietnamDateTime = (date = '', time = '00:00:00') => {
+  const [day, month, year] = String(date || '').split('/').map((part) => Number.parseInt(part, 10));
+  const [hour = 0, minute = 0, second = 0] = String(time || '00:00:00').split(':').map((part) => Number.parseInt(part, 10));
+
+  if (!day || !month || !year) return 0;
+
+  return new Date(year, month - 1, day, hour || 0, minute || 0, second || 0).getTime();
+};
+
+const sortTransactionsNewestFirst = (transactions) => {
+  transactions.sort((a, b) => {
+    const dateA = parseVietnamDateTime(a.transactionDate, a.transactionTime);
+    const dateB = parseVietnamDateTime(b.transactionDate, b.transactionTime);
+    return dateB - dateA;
+  });
 };
 
 const formatAmountForNotification = (amount, currency = 'VND') => {
@@ -601,11 +651,7 @@ const fetchTransactionsV3 = async (accountNumber) => {
     const normalizedTransactions = apiV3Transactions.map(normalizeTransaction);
     
     // Sort by transaction date (newest first)
-    normalizedTransactions.sort((a, b) => {
-      const dateA = new Date(`${a.transactionDate} ${a.transactionTime || '00:00:00'}`);
-      const dateB = new Date(`${b.transactionDate} ${b.transactionTime || '00:00:00'}`);
-      return dateB - dateA;
-    });
+    sortTransactionsNewestFirst(normalizedTransactions);
 
     return normalizedTransactions;
   } catch (error) {
@@ -654,11 +700,7 @@ const fetchTransactionsV1 = async (accountNumber, fromDate = null, toDate = null
     const normalizedTransactions = apiV1Transactions.map(normalizeTransactionV1);
     
     // Sort by transaction date (newest first)
-    normalizedTransactions.sort((a, b) => {
-      const dateA = new Date(`${a.transactionDate} ${a.transactionTime || '00:00:00'}`);
-      const dateB = new Date(`${b.transactionDate} ${b.transactionTime || '00:00:00'}`);
-      return dateB - dateA;
-    });
+    sortTransactionsNewestFirst(normalizedTransactions);
 
     return normalizedTransactions;
   } catch (error) {
@@ -710,45 +752,44 @@ const normalizeTransactionApicanhan = (apiTx) => {
 
 // Function to fetch transactions from API Canhan
 const fetchTransactionsApicanhan = async (accountNumber) => {
-  if (!MB_USERNAME || !MB_PASSWORD) {
-    throw new Error('Vui lòng cấu hình MB_USERNAME và MB_PASSWORD trong file .env');
+  if (!API_CANHAN_BASE_URL) {
+    throw new Error('Vui lòng cấu hình API_CANHAN_BASE_URL trong file .env');
   }
 
   try {
     const accountNo = accountNumber || MB_BANK_CARD_DEFAULT;
+    const apiUrl = new URL(API_CANHAN_BASE_URL);
+
+    if (accountNo) {
+      apiUrl.searchParams.set('accountNo', accountNo);
+    }
+
+    console.log(`📡 Đang lấy giao dịch từ MB API riêng với tài khoản ${accountNo}`);
     
-    // Encode password for URL (handle special characters like !)
-    const encodedPassword = encodeURIComponent(MB_PASSWORD);
-    
-    // Build API URL
-    const apiUrl = `${API_CANHAN_BASE_URL}?key=${API_CANHAN_KEY}&username=${MB_USERNAME}&password=${encodedPassword}&accountNo=${accountNo}`;
-    
-    console.log(`📡 Đang lấy giao dịch từ API Canhan với tài khoản ${accountNo}`);
-    
-    const response = await axios.get(apiUrl, {
+    const response = await axios.get(apiUrl.toString(), {
       timeout: 30000,
     });
 
     if (!response.data) {
-      console.log('⚠️ API Canhan trả về dữ liệu rỗng');
+      console.log('⚠️ MB API riêng trả về dữ liệu rỗng');
       return [];
     }
 
     // Check for error response
     if (response.data.status === 'error') {
-      throw new Error(`API Canhan lỗi: ${response.data.message || 'Unknown error'}`);
+      throw new Error(`MB API riêng lỗi: ${response.data.message || 'Unknown error'}`);
     }
 
     // Check for success response
     if (response.data.status !== 'success') {
-      throw new Error(`API Canhan trả về status không hợp lệ: ${response.data.status}`);
+      throw new Error(`MB API riêng trả về status không hợp lệ: ${response.data.status}`);
     }
 
     // Get transactions from TranList
     const tranList = response.data.TranList || [];
     
     if (!Array.isArray(tranList) || tranList.length === 0) {
-      console.log('📭 API Canhan không có giao dịch nào');
+      console.log('📭 MB API riêng không có giao dịch nào');
       return [];
     }
 
@@ -756,20 +797,16 @@ const fetchTransactionsApicanhan = async (accountNumber) => {
     const normalizedTransactions = tranList.map(normalizeTransactionApicanhan);
     
     // Sort by transaction date (newest first)
-    normalizedTransactions.sort((a, b) => {
-      const dateA = new Date(`${a.transactionDate} ${a.transactionTime || '00:00:00'}`);
-      const dateB = new Date(`${b.transactionDate} ${b.transactionTime || '00:00:00'}`);
-      return dateB - dateA;
-    });
+    sortTransactionsNewestFirst(normalizedTransactions);
 
-    console.log(`✅ API Canhan trả về ${normalizedTransactions.length} giao dịch`);
+    console.log(`✅ MB API riêng trả về ${normalizedTransactions.length} giao dịch`);
     return normalizedTransactions;
   } catch (error) {
-    console.error('❌ Lỗi khi lấy giao dịch từ API Canhan:', error);
+    console.error('❌ Lỗi khi lấy giao dịch từ MB API riêng:', error);
     if (error.response) {
-      throw new Error(`Lỗi API Canhan: ${error.response.status} - ${error.response.data?.message || error.message}`);
+      throw new Error(`Lỗi MB API riêng: ${error.response.status} - ${error.response.data?.message || error.message}`);
     }
-    throw new Error(`Lỗi kết nối API Canhan: ${error.message}`);
+    throw new Error(`Lỗi kết nối MB API riêng: ${error.message}`);
   }
 };
 
@@ -1564,60 +1601,65 @@ const buildHelpMessage = ({ isAdminUser = false } = {}) => {
     `💳 Thẻ Mặc Định: ${MB_BANK_CARD_DEFAULT}`,
     `🤖 Bot tự động kiểm tra giao dịch mỗi 1 phút`,
     '',
-    '📋 Available Commands:',
-    '/start - Start the bot and register for notifications',
-    '/help - Show usage instructions',
-    '/balance - Check the latest account balance',
-    '/transactions - View full transaction history',
-    '/transaction_today - View transactions today only',
-    '/transaction_1_day - View transactions from the past day',
-    '/transactions_with_date - View transactions in a date range',
-    '/export_excel_transactions_all - Export all transactions to Excel',
-    '/excel_transactions_with_date - Export transactions in date range to Excel',
-    '/excel_today - Export today\'s transactions to Excel',
-    '/addsubscriber_me - Add yourself to receive notifications',
-    '/get_chat_id - Get your chat ID',
+    '📋 Các lệnh dành cho User:',
+    '/addsubscriber_me - Đăng ký nhận thông báo cho chính chat hiện tại',
+    '/get_chat_id - Xem chat ID hiện tại',
+    '/help - Hiển thị hướng dẫn',
     '',
+
   ];
 
   if (!isAdminUser) {
-    commonLines.push('', '🛡️ Some commands are for admin only. Contact admin for more support.');
+    commonLines.push('', '🛡️ Một số lệnh chỉ dành cho admin. Liên hệ admin nếu bạn cần hỗ trợ thêm.');
     return commonLines.join('\n');
   }
 
   const adminLines = [
     '',
-    '🛡️ Admin Commands:',
-    '/addsubscriber - Add a chat ID to receive notifications (Admin only)',
-    '/remsubscriber - Remove a chat ID from notifications (Admin only)',
-    '/add_new_admin - Add a new admin user (Admin only)',
-    '/remove_admin_id - Remove an admin user (Admin only)',
-    '/get_all_chat_id - Get all subscribed chat IDs (Admin only)',
-    '/test_payment - Test payment matching functionality (Admin only)',
-    '/test_checknotifiorder - Test CheckNotifiOrder bot connection (Admin only)',
-    '/set_default_card - Set default bank card number (Admin only)',
-    '/set_default_account_mb_bank - Set MB Bank account credentials (Admin only)',
-    '/switch_api_apicanhan - Switch to API Canhan method (Admin only)',
-    '/switch_api_mbbank - Switch to MB Bank Library method (Admin only)',
-    '/switch_apicanhan_test - Test API Canhan without switching (Admin only)',
-    '/reload_config - Reload configuration from .env file (Admin only)',
-    '/check_cron_status - Check cron job status (Admin only)',
-    '/last_transactions - View last saved transaction (Admin only)',
-    '/find_transaction - Find transaction by ID or amount (Admin only)',
-    '/stats_today - View today\'s transaction statistics (Admin only)',
-    '/stats_month - View monthly transaction statistics (Admin only)',
-    '/bot_status - Check bot status and configuration (Admin only)',
-    '/search_amount - Search transactions by amount (Admin only)',
-    '/search_order - Search for order by order ID (Admin only)',
-    '/logs - View recent bot logs (Admin only)',
-    '/reconnect_db - Reconnect to MongoDB (Admin only)',
-    '/resend_notifications - Resend pending notifications (Admin only)',
-    '/reconnect_server - Reconnect to server API (Admin only)',
-    '/add_notifi_order - Add chat ID to CheckNotifiOrder bot (Admin only)',
-    '/list_notifi_order - List all CheckNotifiOrder chat IDs (Admin only)',
-    '/remove_notifi_order - Remove chat ID from CheckNotifiOrder bot (Admin only)',
-    '/stopbot - Stop the auto-check bot (Admin only)',
-    '/startbot - Start the auto-check bot (Admin only)',
+    '🛡️ Lệnh dành cho Admin:',
+    '/balance - Xem số dư từ giao dịch mới nhất',
+    '/transactions [số_tài_khoản] - Xem tất cả lịch sử giao dịch',
+    '/transaction_today - Xem giao dịch hôm nay',
+    '/transaction_1_day - Xem giao dịch từ hôm qua đến hôm nay',
+    '/transactions_with_date <từ_ngày> - <đến_ngày> - Xem lịch sử giao dịch theo khoảng ngày',
+    '/find_transaction <transaction_id> - Tìm giao dịch theo ID',
+    '/search_amount <số_tiền> - Tìm giao dịch theo số tiền',
+    '/search_order <mã_đơn_hàng> - Tìm giao dịch theo mã đơn hàng',
+    '/addsubscriber <chat_id> - Thêm chat ID User nhận thông báo',
+    '/remsubscriber <chat_id> - Xoá chat ID User khỏi thông báo',
+    '/add_new_admin <chat_id> - Thêm Admin mới',
+    '/remove_admin_id <chat_id> - Xoá Admin khỏi bot',
+    '/get_all_chat_id - Xem danh sách tất cả Chat ID đang đăng ký BOT',
+    '',
+    '💾 Lệnh Export Excel:',
+    '/export_excel_transactions_all [số_tài_khoản] - Export tất cả giao dịch ra file Excel',
+    '/excel_today - Export giao dịch hôm nay ra file Excel',
+    '/excel_transactions_with_date <từ_ngày> - <đến_ngày> - Export giao dịch theo khoảng ngày ra file Excel',
+    '',
+    '⭐ Lệnh tiện ích:',
+    '/test_payment <số_tiền> <transaction_id> - Giả lập giao dịch để test bot',
+    '/test_checknotifiorder [chat_id] - Test gửi tin nhắn đến bot CheckNotifiOrder',
+    '/set_default_card <số_thẻ> - Thay đổi thẻ mặc định',
+    '/set_default_account_mb_bank username:<username> password:<password> - Thay đổi tài khoản MB Bank',
+    '/reload_config - Reload file config mà không cần restart bot',
+    '/check_cron_status - Kiểm tra cronjob có chạy đúng mỗi phút không',
+    '/last_transactions - Trả về giao dịch gần nhất',
+    '/bot_status - Xem trạng thái bot và cấu hình',
+    '/stopbot - Dừng bot tự động kiểm tra giao dịch',
+    '/startbot - Bắt đầu lại bot tự động kiểm tra giao dịch',
+    '/logs - Xem logs và trạng thái hệ thống',
+    '/reconnect_db - Reconnect đến MongoDB database',
+    '/reconnect_server - Reconnect đến Telegram API server',
+    '',
+    '📱 Lệnh quản lý CheckNotifiOrder:',
+    '/add_notifi_order <chat_id> - Thêm chat ID nhận thông báo đơn hàng từ CheckNotifiOrder',
+    '/list_notifi_order - Xem danh sách chat ID nhận thông báo CheckNotifiOrder',
+    '/remove_notifi_order <chat_id> - Xóa chat ID khỏi danh sách nhận thông báo CheckNotifiOrder',
+    '/resend_notifications - Gửi lại tất cả đơn hàng chờ thông báo đến CheckNotifiOrder',
+    '',
+    '📊 Lệnh thống kê:',
+    '/stats_today - Thống kê hôm nay (tổng tiền vào/ra)',
+    '/stats_month <MM/YYYY> - Thống kê theo tháng',
   ];
 
   return [...commonLines, ...adminLines].join('\n');
@@ -2733,7 +2775,15 @@ bot.command('startbot', (ctx) => {
       const now = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
       console.log(`\n[${now}] ⏰ INTERVAL TRIGGER: Chạy kiểm tra giao dịch và so khớp đơn hàng...`);
       if (db) {
-        checkTransactionsAndMatchOrders(db);
+        if (isCheckingTransactions) {
+          console.log(`[${now}] ⏭️ Lượt kiểm tra trước chưa xong, bỏ qua để tránh chạy chồng`);
+          return;
+        }
+
+        isCheckingTransactions = true;
+        checkTransactionsAndMatchOrders(db).finally(() => {
+          isCheckingTransactions = false;
+        });
       } else {
         console.log(`[${now}] ⚠️ MongoDB chưa kết nối, bỏ qua kiểm tra`);
       }
@@ -3405,14 +3455,10 @@ const formatOrderDateTime = (date) => {
   if (!date) {
     date = new Date();
   }
-  const d = new Date(date);
-  const hours = String(d.getHours()).padStart(2, '0');
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  const seconds = String(d.getSeconds()).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-  return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+  return new Date(date).toLocaleString('vi-VN', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour12: false,
+  });
 };
 
 // Escape markdown special characters
@@ -3726,7 +3772,7 @@ const resendPendingNotifications = async (maxRetries = 10) => {
               transactionID: pendingItem.transactionId,
               amount: pendingItem.orderData?.totalPrice?.toString() || '',
               description: `CUSTOMER ${orderId}`,
-              transactionDate: pendingItem.createdAt ? new Date(pendingItem.createdAt).toLocaleString('vi-VN') : '',
+              transactionDate: pendingItem.createdAt ? formatOrderDateTime(pendingItem.createdAt) : '',
               type: 'IN',
             };
             const payment = await createPaymentFromBanking(orderId, transactionData);
@@ -3882,12 +3928,20 @@ const checkTransactionsAndMatchOrders = async (db) => {
 
     // Get new transactions
     let newTransactions = [];
+    let foundLastSavedTransaction = false;
     for (const tx of transactions) {
       const txId = getTransactionId(tx);
       if (txId === lastSavedTxId) {
+        foundLastSavedTransaction = true;
         break;
       }
       newTransactions.push(tx);
+    }
+
+    if (!foundLastSavedTransaction) {
+      console.log(`[${timestamp}] ⚠️ Không tìm thấy mốc giao dịch cũ trong danh sách hiện tại. Resync mốc mới nhất để tránh gửi lại toàn bộ lịch sử.`);
+      saveLastTransaction(mostRecentTransaction);
+      return;
     }
 
     if (newTransactions.length === 0) {
@@ -3897,6 +3951,10 @@ const checkTransactionsAndMatchOrders = async (db) => {
     }
 
     console.log(`[${timestamp}] 🔍 Tìm thấy ${newTransactions.length} giao dịch mới`);
+
+    // Save the newest cursor before slow Telegram work so the next interval
+    // does not resend the same batch if notifications hit rate limits.
+    saveLastTransaction(mostRecentTransaction);
 
     // Get all orders chưa thanh toán (logic thanh toán: theo paymentStatus)
     const pendingOrders = await orders
@@ -3947,38 +4005,34 @@ const checkTransactionsAndMatchOrders = async (db) => {
 
     // Always send bank transaction notifications to BotCheckPayment subscribers
     // This should happen regardless of whether orders are matched
-    if (recipients.size > 0 && newTransactions.length > 0) {
-      const transactionsToNotify = [...newTransactions].reverse();
-      console.log(`[${timestamp}] 📤 Đang gửi thông báo ${transactionsToNotify.length} giao dịch ngân hàng mới đến ${recipients.size} người dùng...`);
+    if (ENABLE_BANK_TRANSACTION_NOTIFICATIONS && recipients.size > 0 && newTransactions.length > 0) {
+      const totalNewTransactions = newTransactions.length;
+      const transactionsToNotify = [...newTransactions].reverse().slice(-MAX_BANK_TRANSACTION_NOTIFICATIONS_PER_CHECK);
+      const skippedTransactions = Math.max(totalNewTransactions - transactionsToNotify.length, 0);
+      console.log(`[${timestamp}] 📤 Đang gửi thông báo ${transactionsToNotify.length}/${totalNewTransactions} giao dịch ngân hàng mới đến ${recipients.size} người dùng...`);
+
+      if (skippedTransactions > 0) {
+        const summary = `⚠️ Có ${totalNewTransactions} giao dịch ngân hàng mới. Bot chỉ gửi ${transactionsToNotify.length} giao dịch mới nhất để tránh Telegram giới hạn. Đã tự động cập nhật mốc giao dịch để không gửi lặp lại.`;
+        for (const userId of recipients) {
+          await sendTelegramMessageSafely(userId, summary, timestamp);
+        }
+      }
 
       for (const transaction of transactionsToNotify) {
         const message = formatTransactionNotification(transaction, accountNumber);
 
         for (const userId of recipients) {
-          try {
-            if (message.length > 4000) {
-              const chunks = message.match(/[\s\S]{1,4000}/g) || [];
-              for (const chunk of chunks) {
-                await bot.telegram.sendMessage(userId, chunk);
-              }
-            } else {
-              await bot.telegram.sendMessage(userId, message);
-            }
-          } catch (error) {
-            console.error(`[${timestamp}] ❌ Không thể gửi tin nhắn đến user ${userId}:`, error.message);
-            if (error.response?.error_code === 403 || error.response?.error_code === 400) {
-              removeSubscriber(userId, `Telegram error ${error.response?.error_code}`);
-            }
-          }
+          await sendTelegramMessageSafely(userId, message, timestamp);
         }
       }
 
-      console.log(`[${timestamp}] ✅ Đã gửi thông báo ${transactionsToNotify.length} giao dịch ngân hàng mới đến ${recipients.size} người dùng`);
+      console.log(`[${timestamp}] ✅ Đã xử lý gửi thông báo ${transactionsToNotify.length} giao dịch ngân hàng mới đến ${recipients.size} người dùng`);
+    } else if (!ENABLE_BANK_TRANSACTION_NOTIFICATIONS) {
+      console.log(`[${timestamp}] ℹ️ Đã tắt thông báo giao dịch ngân hàng thường, chỉ xử lý khớp đơn hàng`);
     }
 
     if (matchedOrders.length === 0) {
       console.log(`[${timestamp}] ℹ️ Không tìm thấy đơn hàng nào khớp với giao dịch mới`);
-      saveLastTransaction(mostRecentTransaction);
       return;
     }
 
@@ -4073,9 +4127,6 @@ const checkTransactionsAndMatchOrders = async (db) => {
       }
     }
 
-    // Save most recent transaction
-    saveLastTransaction(mostRecentTransaction);
-
     console.log(`[${timestamp}] ✅ Hoàn thành kiểm tra và cập nhật đơn hàng`);
   } catch (error) {
     console.error(`[${timestamp}] ❌ Lỗi khi kiểm tra giao dịch:`, error);
@@ -4131,12 +4182,20 @@ const checkTodayTransactions = async () => {
     }
 
     let newTransactions = [];
+    let foundLastSavedTransaction = false;
     for (const tx of transactions) {
       const txId = getTransactionId(tx);
       if (txId === lastSavedTxId) {
+        foundLastSavedTransaction = true;
         break;
       }
       newTransactions.push(tx);
+    }
+
+    if (!foundLastSavedTransaction) {
+      console.log(`[${timestamp}] ⚠️ Không tìm thấy mốc giao dịch cũ trong danh sách hiện tại. Resync mốc mới nhất để tránh gửi lại toàn bộ lịch sử.`);
+      saveLastTransaction(mostRecentTransaction);
+      return;
     }
 
     if (newTransactions.length === 0) {
@@ -4158,31 +4217,25 @@ const checkTodayTransactions = async () => {
       return;
     }
 
-    const transactionsToNotify = [...newTransactions].reverse();
+    const transactionsToNotify = [...newTransactions].reverse().slice(-MAX_BANK_TRANSACTION_NOTIFICATIONS_PER_CHECK);
+    const skippedTransactions = Math.max(newTransactions.length - transactionsToNotify.length, 0);
 
     // Send notifications to all recipients
     // Send each new transaction separately for better clarity
-    console.log(`[${timestamp}] 📤 Đang gửi thông báo ${transactionsToNotify.length} giao dịch mới đến ${recipients.size} người dùng...`);
+    console.log(`[${timestamp}] 📤 Đang gửi thông báo ${transactionsToNotify.length}/${newTransactions.length} giao dịch mới đến ${recipients.size} người dùng...`);
+
+    if (skippedTransactions > 0) {
+      const summary = `⚠️ Có ${newTransactions.length} giao dịch ngân hàng mới. Bot chỉ gửi ${transactionsToNotify.length} giao dịch mới nhất để tránh Telegram giới hạn.`;
+      for (const userId of recipients) {
+        await sendTelegramMessageSafely(userId, summary, timestamp);
+      }
+    }
 
     for (const transaction of transactionsToNotify) {
       const message = formatTransactionNotification(transaction, accountNumber);
 
       for (const userId of recipients) {
-        try {
-          if (message.length > 4000) {
-            const chunks = message.match(/[\s\S]{1,4000}/g) || [];
-            for (const chunk of chunks) {
-              await bot.telegram.sendMessage(userId, chunk);
-            }
-          } else {
-            await bot.telegram.sendMessage(userId, message);
-          }
-        } catch (error) {
-          console.error(`[${timestamp}] ❌ Không thể gửi tin nhắn đến user ${userId}:`, error.message);
-          if (error.response?.error_code === 403 || error.response?.error_code === 400) {
-            removeSubscriber(userId, `Telegram error ${error.response?.error_code}`);
-          }
-        }
+        await sendTelegramMessageSafely(userId, message, timestamp);
       }
     }
 
@@ -4308,11 +4361,17 @@ const initMongoDB = async () => {
 };
 
 // Start interval job BEFORE launching bot to ensure it's always running
-// Allow override via env for production tuning (default: 5 seconds)
-const CHECK_INTERVAL_MS = Number.parseInt(process.env.CHECK_INTERVAL_MS || '5000', 10);
+// Allow override via env for production tuning.
+const CHECK_INTERVAL_MS = Number.parseInt(process.env.CHECK_INTERVAL_MS || '60000', 10);
+const MAX_BANK_TRANSACTION_NOTIFICATIONS_PER_CHECK = Number.parseInt(
+  process.env.MAX_BANK_TRANSACTION_NOTIFICATIONS_PER_CHECK || '5',
+  10
+);
+const ENABLE_BANK_TRANSACTION_NOTIFICATIONS = process.env.ENABLE_BANK_TRANSACTION_NOTIFICATIONS !== 'false';
 console.log(`⏰ Đang khởi động interval job kiểm tra giao dịch mỗi ${Math.round(CHECK_INTERVAL_MS / 1000)} giây...`);
 let intervalJob = null;
 let clearLogsJob = null;
+let isCheckingTransactions = false;
 
 // Bot running status - to control start/stop of auto-check
 let isBotRunning = true;
@@ -4331,11 +4390,19 @@ bot.telegram.getMe().then(async (botInfo) => {
     const now = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
     console.log(`\n[${now}] ⏰ INTERVAL TRIGGER: Chạy kiểm tra giao dịch và so khớp đơn hàng...`);
     if (db) {
-      checkTransactionsAndMatchOrders(db);
+      if (isCheckingTransactions) {
+        console.log(`[${now}] ⏭️ Lượt kiểm tra trước chưa xong, bỏ qua để tránh chạy chồng`);
+        return;
+      }
+
+      isCheckingTransactions = true;
+      checkTransactionsAndMatchOrders(db).finally(() => {
+        isCheckingTransactions = false;
+      });
     } else {
       console.log(`[${now}] ⚠️ MongoDB chưa kết nối, bỏ qua kiểm tra`);
     }
-  }, CHECK_INTERVAL_MS); // default: 5000ms
+  }, CHECK_INTERVAL_MS);
   console.log(`✅ Interval job đã được khởi động! (isBotRunning: ${isBotRunning})`);
   console.log('📅 Timezone: Asia/Ho_Chi_Minh');
   console.log(`⏱️  Lịch chạy: Mỗi ${Math.round(CHECK_INTERVAL_MS / 1000)} giây`);
